@@ -1,0 +1,10 @@
+# VLC runtime (ship it next to your script, not in this repository)
+vlc/
+vlc_x64/
+vlc_x86/
+*.dll
+# compiled scripts and AutoIt3Wrapper backups
+*.exe
+BackUp/
+# Python cache
+__pycache__/

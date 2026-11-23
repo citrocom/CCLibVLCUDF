@@ -1,0 +1,26 @@
+CCLibVLC - VLC player UDF for AutoIt (libVLC 3.0)
+Copyright (C) 2026 Markus Debus, CITRO Computer
+
+This program is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version. See the file LICENSE.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
+even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+Additional term according to section 7(b) of the GNU GPL version 3 (attribution):
+  Any work that uses, contains or is derived from CCLibVLC, in source or compiled form, must retain
+  this NOTICE file and must name the project as "CCLibVLC - Markus Debus, CITRO Computer" in its
+  documentation, and, if the work has an "About" dialog or a similar display of credits, also there.
+  The copyright and SPDX headers in the source files must not be removed.
+
+Zusätzliche Bedingung gemäß Abschnitt 7(b) der GNU GPL Version 3 (Namensnennung):
+  Jedes Werk, das CCLibVLC verwendet, enthält oder davon abgeleitet ist, ob als Quelltext oder
+  kompiliert, muss diese NOTICE-Datei beibehalten und das Projekt als "CCLibVLC - Markus Debus,
+  CITRO Computer" in seiner Dokumentation nennen, und, falls das Werk einen "Info"-Dialog oder eine
+  ähnliche Anzeige von Mitwirkenden hat, auch dort. Die Copyright- und SPDX-Kopfzeilen in den
+  Quelldateien dürfen nicht entfernt werden.
+
+Third-party components (not part of CCLibVLC, not included):
+  libVLC / VLC media player (C) VideoLAN and VLC authors, LGPL-2.1-or-later (some plugins GPL).
+  CCLibVLC_Raw.au3 and CCLibVLC_Constants.au3 are generated from the public libVLC 3.0 header files.

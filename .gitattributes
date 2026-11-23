@@ -1,0 +1,5 @@
+* text=auto
+# AutoIt sources are stored exactly as SciTE writes them (UTF-8 with BOM, CRLF),
+# so raw downloads and ZIP archives work unchanged on Windows.
+*.au3 -text diff
+*.bin binary
