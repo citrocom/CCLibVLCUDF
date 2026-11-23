@@ -129,7 +129,7 @@ Local $hPauseT = TimerInit()
 Do
 	Sleep(50)
 Until ($g_aSeen[$libvlc_MediaPlayerPaused] = 1 And _libvlc_media_player_get_state($pP) = $libvlc_Paused) Or TimerDiff($hPauseT) > 3000
-T($g_aSeen[$libvlc_MediaPlayerPaused] = 1 And _libvlc_media_player_get_state($pP) = $libvlc_Paused, "pause + event")
+T($g_aSeen[$libvlc_MediaPlayerPaused] = 1 And _libvlc_media_player_get_state($pP) = $libvlc_Paused, "pause + event", "seen=" & $g_aSeen[$libvlc_MediaPlayerPaused] & " state=" & _libvlc_media_player_get_state($pP))
 _libvlc_media_player_set_pause($pP, 0)
 Sleep(200)
 Local $hS = TimerInit()

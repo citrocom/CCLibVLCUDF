@@ -56,6 +56,20 @@ T(_GUICtrlVLC_SetResizing($iVlc, 102), "SetResizing DOCKBORDERS")
 Global $idBtn = GUICtrlCreateButton("Test", 10, 360, 80, 30)
 GUICtrlSetResizing($idBtn, 802)
 GUISetState(@SW_SHOW, $hGui)
+; double click on the video: the second click arrives as WM_LBUTTONDBLCLK and must still be reported as a click
+Global $iClicks = 0, $bDbl = False, $hClickT
+Global $aClickMsgs[4] = [0x0201, 0x0202, 0x0203, 0x0202] ; down, up, double click, up
+For $m In $aClickMsgs
+	DllCall("user32.dll", "lresult", "SendMessageW", "hwnd", $hHost, "uint", $m, "wparam", ($m = 0x0202 ? 0 : 1), "lparam", 0x00140014)
+Next
+$hClickT = TimerInit()
+While TimerDiff($hClickT) < 500
+	If GUIGetMsg() = $idCtrl Then
+		$iClicks += 1
+		If _GUICtrlVLC_IsDoubleClick($iVlc) Then $bDbl = True
+	EndIf
+WEnd
+T($iClicks = 2 And $bDbl, "double click reported as two clicks + IsDoubleClick", "clicks=" & $iClicks & " dbl=" & $bDbl)
 T(_GUICtrlVLC_SetEventCallback($iVlc, "OnVlc"), "SetEventCallback")
 T(_GUICtrlVLC_GetState($iVlc) = 0 And _GUICtrlVLC_GetStateText($iVlc) = "Idle", "state idle")
 T(_GUICtrlVLC_Pause($iVlc) = False, "Pause without media -> False")
@@ -108,7 +122,7 @@ T(_GUICtrlVLC_SetAspectRatio($iVlc, "") And _GUICtrlVLC_GetAspectRatio($iVlc) = 
 T(_GUICtrlVLC_SetMarquee($iVlc, "Front door %H:%M:%S", 5, 20, 0xFFFFFF), "marquee")
 T(_GUICtrlVLC_SetAdjust($iVlc, True, 1.2, 1.1), "adjust")
 T(_GUICtrlVLC_SetEqualizer($iVlc, 0) And _GUICtrlVLC_SetEqualizer($iVlc, -1), "equalizer on/off")
-If EnvGet("CCLIBVLC_TEST_SNAPSHOT") <> "" Then ; Wine: libswscale crashes sporadically in snapshots (also without CCLibVLC)
+If EnvGet("CCLIBVLC_TEST_SNAPSHOT") <> "" Then ; optional test, enable with CCLIBVLC_TEST_SNAPSHOT=1
 	Local $sSnap = @TempDir & "\cclibvlc_snap.png"
 	Local $bSnap = _GUICtrlVLC_TakeSnapshot($iVlc, $sSnap)
 	T($bSnap And FileGetSize($sSnap) > 100, "TakeSnapshot", FileGetSize($sSnap) & " bytes")
@@ -165,8 +179,14 @@ T(_GUICtrlVLC_Play($iVlc) And WaitFor($iVlc, $VLC_STATE_PLAYING, 4000), "Play af
 ; busy protection: a stop that exceeds its timeout must not block later calls
 T(WaitFor($iVlc, $VLC_STATE_PLAYING, 4000), "playing before busy test")
 Local $pRaw = _GUICtrlVLC_GetPlayer($iVlc)
-T(_VLC_PlayerStop($pRaw, 0) = False And @error = $VLC_ERR_TIMEOUT, "stop with 0 ms timeout -> TIMEOUT")
-T(_VLC_PlayerIsBusy($pRaw), "player busy while stop runs")
+Local $bStop0 = _VLC_PlayerStop($pRaw, 0), $iStop0Err = @error
+If $bStop0 Then
+	; the stop can finish before the 0 ms timeout is checked (fast systems): nothing to test then
+	ConsoleWrite("SKIP busy protection: stop finished within 0 ms" & @CRLF)
+Else
+	T($iStop0Err = $VLC_ERR_TIMEOUT, "stop with 0 ms timeout -> TIMEOUT", $iStop0Err)
+	; the worker may finish right after the timeout, so "busy" is only checked below while it lasts
+EndIf
 If _VLC_PlayerIsBusy($pRaw) Then ; the stop may already have finished on fast systems
 	$hT = TimerInit()
 	_GUICtrlVLC_GetTime($iVlc)

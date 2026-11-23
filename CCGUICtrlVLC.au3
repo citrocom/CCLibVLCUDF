@@ -48,6 +48,9 @@ Global Const $__VLCC_USED = 0, $__VLCC_PLAYER = 1, $__VLCC_MEDIA = 2, $__VLCC_HO
 		$__VLCC_LASTCLICK = 18, $__VLCC_COLS = 19
 Global $__g_aVLCC[1][$__VLCC_COLS] = [[0]]
 Global $__g_bVLCC_FSWatch = False
+; window subclass of the host controls (double click fix, see __GUICtrlVLC_HostProc)
+Global Const $__VLCC_SUBCLASS_ID = 0x564C4343 ; "VLCC"
+Global $__g_hVLCC_HostCb = 0
 
 ; compatibility with VLC.au3 v0.3 (seangriffin)
 Global $oVLCErrorHandler = 0, $sVLCUserErrorHandler = ""
@@ -169,6 +172,7 @@ Func _GUICtrlVLC_Create($iLeft, $iTop, $iWidth, $iHeight, $iFlags = $VLC_CTRL_DE
 		$__g_aVLCC[$iId][$__VLCC_USED] = False
 		Return SetError($iErr, 0, 0)
 	EndIf
+	__GUICtrlVLC_HostHook($hHost, True) ; makes the second click of a double click visible to GUIGetMsg
 	Return $iId
 EndFunc   ;==>_GUICtrlVLC_Create
 
@@ -187,6 +191,7 @@ Func _GUICtrlVLC_Delete($iPlayer)
 	Local $iErr = @error
 	If $bOk Then
 		If $__g_aVLCC[$iPlayer][$__VLCC_MEDIA] <> 0 Then _libvlc_media_release($__g_aVLCC[$iPlayer][$__VLCC_MEDIA])
+		__GUICtrlVLC_HostHook($__g_aVLCC[$iPlayer][$__VLCC_HOST], False)
 		GUICtrlDelete($__g_aVLCC[$iPlayer][$__VLCC_CTRLID])
 	Else
 		; libVLC did not finish in time: its video window still lives inside the control. Destroying the control
@@ -1336,6 +1341,43 @@ Func __GUICtrlVLC_PlayIndex($iPlayer, $iIndex)
 	If _libvlc_media_player_play($pPlayer) <> 0 Then Return SetError($VLC_ERR_LIBVLC, 0, __VLC_LibErrRet(False, "libvlc_media_player_play() failed"))
 	Return True
 EndFunc   ;==>__GUICtrlVLC_PlayIndex
+
+; #INTERNAL_USE_ONLY# ===========================================================================================================
+; Name ..........: __GUICtrlVLC_HostHook
+; Description ...: Installs ($bInstall = True) or removes the window subclass of a host control.
+; ===============================================================================================================================
+Func __GUICtrlVLC_HostHook($hHost, $bInstall)
+	If $__g_hVLCC_HostCb = 0 Then
+		If Not $bInstall Then Return False
+		$__g_hVLCC_HostCb = DllCallbackRegister("__GUICtrlVLC_HostProc", "lresult", "hwnd;uint;wparam;lparam;uint_ptr;dword_ptr")
+		If $__g_hVLCC_HostCb = 0 Then Return False
+	EndIf
+	Local $aRet
+	If $bInstall Then
+		$aRet = DllCall("comctl32.dll", "bool", "SetWindowSubclass", "hwnd", $hHost, "ptr", DllCallbackGetPtr($__g_hVLCC_HostCb), _
+				"uint_ptr", $__VLCC_SUBCLASS_ID, "dword_ptr", 0)
+	Else
+		$aRet = DllCall("comctl32.dll", "bool", "RemoveWindowSubclass", "hwnd", $hHost, "ptr", DllCallbackGetPtr($__g_hVLCC_HostCb), _
+				"uint_ptr", $__VLCC_SUBCLASS_ID)
+	EndIf
+	Return Not @error And $aRet[0]
+EndFunc   ;==>__GUICtrlVLC_HostHook
+
+; #INTERNAL_USE_ONLY# ===========================================================================================================
+; Name ..........: __GUICtrlVLC_HostProc
+; Description ...: Subclass procedure of the host controls. The static control class has CS_DBLCLKS, so the second click
+;                  of a double click arrives as WM_LBUTTONDBLCLK and the control sends STN_DBLCLK, which AutoIt does not
+;                  report: GUIGetMsg() saw only one click and _GUICtrlVLC_IsDoubleClick() never returned True. The
+;                  message is passed on as WM_LBUTTONDOWN, so the control reports a second STN_CLICKED.
+;                  Touches no shared state (it can run between any two statements of the script).
+; ===============================================================================================================================
+Func __GUICtrlVLC_HostProc($hWnd, $iMsg, $wParam, $lParam, $iIdSubclass, $pRefData)
+	#forceref $iIdSubclass, $pRefData
+	If $iMsg = 0x0203 Then $iMsg = 0x0201 ; WM_LBUTTONDBLCLK -> WM_LBUTTONDOWN
+	Local $aRet = DllCall("comctl32.dll", "lresult", "DefSubclassProc", "hwnd", $hWnd, "uint", $iMsg, "wparam", $wParam, "lparam", $lParam)
+	If @error Then Return 0
+	Return $aRet[0]
+EndFunc   ;==>__GUICtrlVLC_HostProc
 
 ; #INTERNAL_USE_ONLY# ===========================================================================================================
 ; Name ..........: __GUICtrlVLC_Subscribe

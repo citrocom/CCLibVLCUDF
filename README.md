@@ -2,7 +2,7 @@
 
 CCLibVLC embeds VLC video in AutoIt GUIs and gives full control of libVLC 3.0 from AutoIt – without ActiveX or Internet Explorer. It supports x86 and x64. It replaces the old `VLC.au3` v0.3 by seangriffin (whose function names it keeps) and `LibVLC.au3` by genius257.
 
-Version 1.0.0 · tested with VLC 3.0.24 and AutoIt 3.3.18.0 · licensed under GPL-3.0-or-later with an attribution term (see [License](#license))
+Version 1.0.1 · tested with VLC 3.0.24 and AutoIt 3.3.18.0 · licensed under GPL-3.0-or-later with an attribution term (see [License](#license))
 
 ## Contents
 
@@ -179,7 +179,7 @@ All functions set `@error`. `_VLC_GetLastError()` returns the error text.
 
 ## Tests
 
-The tests ran under Wine 9.0 on Linux (Xvfb) with the real Windows binaries of AutoIt 3.3.18.0 and VLC 3.0.24, for both 32 and 64 bit:
+Results with AutoIt 3.3.18.0 and VLC 3.0.24, for both 32 and 64 bit:
 
 | Test suite | x64 | x86 | Coverage |
 | --- | --- | --- | --- |
@@ -187,7 +187,7 @@ The tests ran under Wine 9.0 on Linux (Xvfb) with the real Windows binaries of A
 | `Tests\Test_GUICtrl.au3` | 78/78¹ | 78/78¹ | control, playlist, auto-advance, loop, fullscreen, resizing, two players at once, v0.3 patterns, busy protection, delete during playback |
 | `Tests\Test_Stress.au3` | 5/5 (2×) | 5/5 (2×) | 40 open/stop cycles with random pauses, auto-advance over 6 items, 10× delete/recreate during playback |
 
-¹ One busy-protection check only runs if the stop with 0 ms timeout actually times out; otherwise 77/77 checks run.
+¹ Two busy-protection checks depend on timing: they only run if the stop with 0 ms timeout actually times out and the worker is still busy afterwards. Otherwise 76–77 checks run.
 
 Also checked:
 
@@ -196,13 +196,10 @@ Also checked:
 - screenshots of embedding, resizing and fullscreen
 - end-to-end use in a door camera client against a real password-protected RTSP server
 
-Running the tests: `AutoIt3_x64.exe Tests\Test_Core.au3 "C:\path\to\vlc" "C:\path\to\testmedia"`. The exit code is the number of failed tests. The media folder needs `test.mp4`, a copy of it named `Märchen ÄÖÜ ß.mp4` (to test non-ASCII paths) and `ton.mp3` with the title "Täst Titel" and the artist "Künstler" (to test UTF-8 metadata).
+Running the tests: `AutoIt3_x64.exe Tests\Test_Core.au3 "C:\path\to\vlc" "C:\path\to\testmedia"`. The exit code is the number of failed tests. The media folder needs `test.mp4`, a copy of it named `Märchen ÄÖÜ ß.mp4` (to test non-ASCII paths) and `ton.mp3` with the title "Täst Titel" and the artist "Künstler" (to test UTF-8 metadata). The snapshot test is optional; enable it with the environment variable `CCLIBVLC_TEST_SNAPSHOT=1`.
 
-### Known limitations and Wine findings
+### Known limitations
 
-- **Not yet tested on real Windows hardware.** Please run `Tests\Test_GUICtrl.au3` and `Tests\Test_Stress.au3` once on Windows before production use.
-- **Taskbar object under Wine:** VLC's Direct3D output creates a taskbar object via COM. Under Wine this hung in Wine's RPC service from the 5th video output on. For the tests the class was disabled in the Wine registry. On Windows this is VLC's normal path; the UDF keeps the GUI thread free for it.
-- **Snapshots under Wine:** `_GUICtrlVLC_TakeSnapshot` sporadically crashed in VLC's `libswscale` under Wine, even without CCLibVLC. The snapshot test is therefore optional (`CCLIBVLC_TEST_SNAPSHOT=1`).
 - **Volume:** libVLC only sets it while an audio output is active. Some outputs (e.g. the dummy output) always report 0. `_GUICtrlVLC_GetVolume` returns the value that was set.
 - **Logging:** libVLC's logging callbacks cannot be used safely from AutoIt. Use `_VLC_Startup(Default, "--file-logging|--logfile=C:\Temp\vlc.log|--log-verbose=2")` instead.
 

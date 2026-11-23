@@ -23,7 +23,7 @@
 
 #Region Constants and globals
 ; #CONSTANTS# ===================================================================================================================
-Global Const $CCLIBVLC_VERSION = "1.0.0"
+Global Const $CCLIBVLC_VERSION = "1.0.1"
 
 ; error codes (@error)
 Global Const $VLC_ERR_OK = 0
@@ -104,10 +104,25 @@ Global $__g_aVLC_Busy[1][2] = [[0]]       ; worker threads that exceeded their t
 ;          7 subscription id (unique, never reused, also the cookie posted by the thunk)
 Global $__g_aVLC_Subs[1][8] = [[0]]
 Global $__g_iVLC_NextSubId = 0
+; Event delivery runs in two stages, because the window procedure that receives the events from the native thunk can
+; interrupt running script code between any two statements (verified): a shared array changed by both sides would lose
+; or duplicate events.
+;   1. Inbox (ring buffer): written only by __VLC_WM_EVENT (window procedure), read only by __VLC_InboxDrain (script
+;      code). The writer publishes an entry by advancing $__g_iVLC_InboxTail as its last statement, the reader frees it
+;      by advancing $__g_iVLC_InboxHead. Each index has exactly one writer, so no lock is needed. The window procedure
+;      is never re-entered (verified), so there is only one writer at a time.
+;   2. Queue: used only by script code (drain, pump, polling, detach). Script code that changes it sets
+;      $__g_bVLC_InPump, so the Adlib pump cannot interrupt it in the middle of a change.
+; inbox: columns 0 subscription id, 1 type, 2 value1, 3 value2, 4 pObj
+Global Const $__VLC_INBOX_SIZE = 4096
+Global $__g_aVLC_Inbox[$__VLC_INBOX_SIZE][5]
+Global $__g_iVLC_InboxTail = 0            ; number of entries ever written (window procedure only)
+Global $__g_iVLC_InboxHead = 0            ; number of entries ever taken (script code only)
+Global $__g_iVLC_InboxDropped = 0         ; events dropped because the inbox was full (window procedure only)
 ; event queue: [0][0] = count; columns: 0 subscription id, 1 type, 2 value1, 3 value2, 4 pObj
 Global $__g_aVLC_Queue[1][5] = [[0]]
 Global Const $__VLC_QUEUE_MAX = 5000
-Global $__g_bVLC_InPump = False
+Global $__g_bVLC_InPump = False           ; queue is being changed by script code / pump is running
 Global $__g_bVLC_PumpRegistered = False
 Global $__g_sVLC_ShutdownHook = ""        ; called by _VLC_Shutdown() before the instance is released (GUI layer)
 
@@ -169,7 +184,8 @@ Global Const $__VLC_THUNK_EVENT = 0x00, $__VLC_THUNK_WORKER = 0x80
 ; #INTERNAL_USE_ONLY# ===========================================================================================================
 ; __VLC_Ptr, __VLC_Utf8Struct, __VLC_Utf8Array, __VLC_Utf8ArrayPtr, __VLC_StrFromPtr, __VLC_ErrRet, __VLC_LibErrRet,
 ; __VLC_FindDir, __VLC_CheckDir, __VLC_GetPEMachine, __VLC_OptionsToArray, __VLC_NativeInit, __VLC_GetCurrentGUI, __VLC_WndProc,
-; __VLC_RunOnWorker, __VLC_WM_EVENT, __VLC_EventPump, __VLC_EventDecode, __VLC_QueueAdd, __VLC_OnExit, __VLC_FullPath
+; __VLC_RunOnWorker, __VLC_WM_EVENT, __VLC_InboxAdd, __VLC_InboxDrain, __VLC_EventPump, __VLC_EventDecode, __VLC_QueueAdd,
+; __VLC_OnExit, __VLC_FullPath
 ; ===============================================================================================================================
 
 #Region Startup / shutdown
@@ -291,6 +307,7 @@ Func _VLC_Shutdown($iTimeout = $VLC_DEFAULT_TIMEOUT)
 	Local $iErr = @error
 	; deliver/free events that are still queued as window messages
 	Sleep(10)
+	$__g_iVLC_InboxHead = $__g_iVLC_InboxTail
 	$__g_aVLC_Queue[0][0] = 0
 	If $__g_bVLC_PumpRegistered Then
 		AdlibUnRegister("__VLC_EventPump")
@@ -1068,8 +1085,10 @@ Func _VLC_EventDetach($iSubscription, $bOwnerReleased = False)
 		$__g_aVLC_Subs[$iSlot][$c] = 0
 	Next
 	$__g_aVLC_Subs[$iSlot][4] = ""
-	; drop queued events of this subscription (messages still on their way are dropped in __VLC_WM_EVENT, because
-	; subscription ids are never reused)
+	; drop queued events of this subscription (events still in the inbox or on their way are dropped by the pump,
+	; because subscription ids are never reused). The flag keeps the Adlib pump out while the queue is compacted.
+	Local $bWasInPump = $__g_bVLC_InPump
+	$__g_bVLC_InPump = True
 	Local $n = $__g_aVLC_Queue[0][0], $k = 0
 	For $i = 1 To $n
 		If $__g_aVLC_Queue[$i][0] <> $iSubscription Then
@@ -1082,6 +1101,7 @@ Func _VLC_EventDetach($iSubscription, $bOwnerReleased = False)
 		EndIf
 	Next
 	$__g_aVLC_Queue[0][0] = $k
+	$__g_bVLC_InPump = $bWasInPump
 	Return True
 EndFunc   ;==>_VLC_EventDetach
 
@@ -1124,6 +1144,10 @@ EndFunc   ;==>__VLC_SubSlot
 ; Return values .: True if an event was returned, False if the queue is empty
 ; ===============================================================================================================================
 Func _VLC_EventGetNext(ByRef $aEvent, $iSubscription = Default)
+	Local $bWasInPump = $__g_bVLC_InPump
+	$__g_bVLC_InPump = True ; keep the Adlib pump out while the queue is changed
+	__VLC_InboxDrain()
+	Local $bFound = False
 	For $i = 1 To $__g_aVLC_Queue[0][0]
 		Local $iSub = $__g_aVLC_Queue[$i][0]
 		If Not IsKeyword($iSubscription) And $iSub <> $iSubscription Then ContinueLoop
@@ -1134,9 +1158,11 @@ Func _VLC_EventGetNext(ByRef $aEvent, $iSubscription = Default)
 		Local $aEv[5] = [$iSub, $__g_aVLC_Queue[$i][1], $__g_aVLC_Queue[$i][2], $__g_aVLC_Queue[$i][3], $__g_aVLC_Queue[$i][4]]
 		__VLC_QueueRemove($i)
 		$aEvent = $aEv
-		Return True
+		$bFound = True
+		ExitLoop
 	Next
-	Return False
+	$__g_bVLC_InPump = $bWasInPump
+	Return $bFound
 EndFunc   ;==>_VLC_EventGetNext
 
 ; #FUNCTION# ====================================================================================================================
@@ -1162,6 +1188,8 @@ Func _VLC_EventsProcess()
 	$__g_bVLC_InPump = True
 	Local $iDelivered = 0
 	While $iDelivered < 10000
+		; take over events that arrived meanwhile (also those that arrive while callbacks run)
+		__VLC_InboxDrain()
 		; first queued event that belongs to a subscription with callback (drop orphaned events on the way)
 		Local $iIdx = 0, $iSlot = 0, $i = 1
 		While $i <= $__g_aVLC_Queue[0][0]
@@ -1615,10 +1643,58 @@ Func __VLC_WM_EVENT($wParam, $lParam)
 	Local $pObj = DllStructGetData(DllStructCreate("ptr", Ptr($pRec + (@AutoItX64 ? 8 : 4))), 1)
 	Local $aVal = __VLC_EventDecode($iType, Ptr($pRec + $iOff))
 	DllCall("kernel32.dll", "bool", "HeapFree", "handle", $__g_hVLC_Heap, "dword", 0, "ptr", $pRec)
-	Local $iSub = Int($lParam)
-	If __VLC_SubSlot($iSub) <> 0 Then __VLC_QueueAdd($iSub, $iType, $aVal[0], $aVal[1], $pObj)
+	__VLC_InboxAdd(Int($lParam), $iType, $aVal[0], $aVal[1], $pObj)
 	Return 0
 EndFunc   ;==>__VLC_WM_EVENT
+
+; #INTERNAL_USE_ONLY# ===========================================================================================================
+; Name ..........: __VLC_InboxAdd
+; Description ...: Window procedure side of the inbox (see the globals): appends an event. Frequent events
+;                  (time/position/buffering) replace the newest entry if it has the same subscription and type and the
+;                  reader has not reached it yet. If the inbox is full (pump stalled for a long time, e.g. by a MsgBox),
+;                  the event is dropped and counted.
+; ===============================================================================================================================
+Func __VLC_InboxAdd($iSub, $iType, $v1, $v2, $pObj)
+	Local $iTail = $__g_iVLC_InboxTail
+	If $iType = $libvlc_MediaPlayerTimeChanged Or $iType = $libvlc_MediaPlayerPositionChanged Or $iType = $libvlc_MediaPlayerBuffering Then
+		; the reader cannot run while this code runs; entries after the head are not being read
+		If $iTail - 1 > $__g_iVLC_InboxHead Then
+			Local $iLast = Mod($iTail - 1, $__VLC_INBOX_SIZE)
+			If $__g_aVLC_Inbox[$iLast][0] = $iSub And $__g_aVLC_Inbox[$iLast][1] = $iType Then
+				$__g_aVLC_Inbox[$iLast][2] = $v1
+				Return
+			EndIf
+		EndIf
+	EndIf
+	If $iTail - $__g_iVLC_InboxHead >= $__VLC_INBOX_SIZE Then
+		$__g_iVLC_InboxDropped += 1
+		Return
+	EndIf
+	Local $iSlot = Mod($iTail, $__VLC_INBOX_SIZE)
+	$__g_aVLC_Inbox[$iSlot][0] = $iSub
+	$__g_aVLC_Inbox[$iSlot][1] = $iType
+	$__g_aVLC_Inbox[$iSlot][2] = $v1
+	$__g_aVLC_Inbox[$iSlot][3] = $v2
+	$__g_aVLC_Inbox[$iSlot][4] = $pObj
+	$__g_iVLC_InboxTail = $iTail + 1 ; publish the entry (last statement)
+EndFunc   ;==>__VLC_InboxAdd
+
+; #INTERNAL_USE_ONLY# ===========================================================================================================
+; Name ..........: __VLC_InboxDrain
+; Description ...: Script side of the inbox: moves all published entries into the queue. Call only with
+;                  $__g_bVLC_InPump set (pump, polling), never from the window procedure.
+; ===============================================================================================================================
+Func __VLC_InboxDrain()
+	Local $iTail = $__g_iVLC_InboxTail, $iSlot
+	While $__g_iVLC_InboxHead < $iTail
+		$iSlot = Mod($__g_iVLC_InboxHead, $__VLC_INBOX_SIZE)
+		__VLC_QueueAdd($__g_aVLC_Inbox[$iSlot][0], $__g_aVLC_Inbox[$iSlot][1], $__g_aVLC_Inbox[$iSlot][2], _
+				$__g_aVLC_Inbox[$iSlot][3], $__g_aVLC_Inbox[$iSlot][4])
+		$__g_aVLC_Inbox[$iSlot][2] = "" ; release references (e.g. strings) early
+		$__g_aVLC_Inbox[$iSlot][4] = 0
+		$__g_iVLC_InboxHead += 1
+	WEnd
+EndFunc   ;==>__VLC_InboxDrain
 
 ; #INTERNAL_USE_ONLY# ===========================================================================================================
 ; Name ..........: __VLC_EventDecode
@@ -1654,17 +1730,16 @@ EndFunc   ;==>__VLC_EventDecode
 
 ; #INTERNAL_USE_ONLY# ===========================================================================================================
 ; Name ..........: __VLC_QueueAdd / __VLC_QueueRemove
-; Description ...: Event queue handling (coalesces time/position/buffering events).
+; Description ...: Event queue handling, script code only. Time/position/buffering events replace the newest queue entry
+;                  if it has the same subscription and type (only the newest, so the order of events is kept).
 ; ===============================================================================================================================
 Func __VLC_QueueAdd($iSub, $iType, $v1, $v2, $pObj)
 	Local $n = $__g_aVLC_Queue[0][0]
-	If $iType = $libvlc_MediaPlayerTimeChanged Or $iType = $libvlc_MediaPlayerPositionChanged Or $iType = $libvlc_MediaPlayerBuffering Then
-		For $i = $n To 1 Step -1
-			If $__g_aVLC_Queue[$i][0] = $iSub And $__g_aVLC_Queue[$i][1] = $iType Then
-				$__g_aVLC_Queue[$i][2] = $v1
-				Return
-			EndIf
-		Next
+	If $n > 0 And ($iType = $libvlc_MediaPlayerTimeChanged Or $iType = $libvlc_MediaPlayerPositionChanged Or $iType = $libvlc_MediaPlayerBuffering) Then
+		If $__g_aVLC_Queue[$n][0] = $iSub And $__g_aVLC_Queue[$n][1] = $iType Then
+			$__g_aVLC_Queue[$n][2] = $v1
+			Return
+		EndIf
 	EndIf
 	If $n >= $__VLC_QUEUE_MAX Then __VLC_QueueRemove(1) ; never grow without limit
 	$n = $__g_aVLC_Queue[0][0] + 1
@@ -1693,7 +1768,7 @@ EndFunc   ;==>__VLC_QueueRemove
 ; Description ...: Adlib function delivering queued events to the callbacks.
 ; ===============================================================================================================================
 Func __VLC_EventPump()
-	If $__g_aVLC_Queue[0][0] > 0 Then _VLC_EventsProcess()
+	If $__g_iVLC_InboxHead <> $__g_iVLC_InboxTail Or $__g_aVLC_Queue[0][0] > 0 Then _VLC_EventsProcess()
 EndFunc   ;==>__VLC_EventPump
 
 ; #INTERNAL_USE_ONLY# ===========================================================================================================
