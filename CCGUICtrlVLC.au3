@@ -51,6 +51,7 @@ Global $__g_bVLCC_FSWatch = False
 ; window subclass of the host controls (double click fix, see __GUICtrlVLC_HostProc)
 Global Const $__VLCC_SUBCLASS_ID = 0x564C4343 ; "VLCC"
 Global $__g_hVLCC_HostCb = 0
+Global $__g_hVLCC_Comctl = DllOpen("comctl32.dll") ; used for every message of the host controls
 
 ; compatibility with VLC.au3 v0.3 (seangriffin)
 Global $oVLCErrorHandler = 0, $sVLCUserErrorHandler = ""
@@ -1374,7 +1375,7 @@ EndFunc   ;==>__GUICtrlVLC_HostHook
 Func __GUICtrlVLC_HostProc($hWnd, $iMsg, $wParam, $lParam, $iIdSubclass, $pRefData)
 	#forceref $iIdSubclass, $pRefData
 	If $iMsg = 0x0203 Then $iMsg = 0x0201 ; WM_LBUTTONDBLCLK -> WM_LBUTTONDOWN
-	Local $aRet = DllCall("comctl32.dll", "lresult", "DefSubclassProc", "hwnd", $hWnd, "uint", $iMsg, "wparam", $wParam, "lparam", $lParam)
+	Local $aRet = DllCall($__g_hVLCC_Comctl, "lresult", "DefSubclassProc", "hwnd", $hWnd, "uint", $iMsg, "wparam", $wParam, "lparam", $lParam)
 	If @error Then Return 0
 	Return $aRet[0]
 EndFunc   ;==>__GUICtrlVLC_HostProc

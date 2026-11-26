@@ -23,7 +23,7 @@
 
 #Region Constants and globals
 ; #CONSTANTS# ===================================================================================================================
-Global Const $CCLIBVLC_VERSION = "1.0.1"
+Global Const $CCLIBVLC_VERSION = "1.0.2"
 
 ; error codes (@error)
 Global Const $VLC_ERR_OK = 0
@@ -123,6 +123,11 @@ Global $__g_iVLC_InboxDropped = 0         ; events dropped because the inbox was
 Global $__g_aVLC_Queue[1][5] = [[0]]
 Global Const $__VLC_QUEUE_MAX = 5000
 Global $__g_bVLC_InPump = False           ; queue is being changed by script code / pump is running
+; DLL handles for calls in frequently used paths (window procedures, wait loops). DllCall with a file name loads and
+; frees the DLL on every call, which takes the process-wide loader lock each time; while libVLC loads plugins (possibly
+; from a slow network share) that can stall the GUI thread.
+Global $__g_hVLC_K32 = DllOpen("kernel32.dll")
+Global $__g_hVLC_U32 = DllOpen("user32.dll")
 Global $__g_bVLC_PumpRegistered = False
 Global $__g_sVLC_ShutdownHook = ""        ; called by _VLC_Shutdown() before the instance is released (GUI layer)
 
@@ -772,7 +777,7 @@ EndFunc   ;==>_VLC_PlayerRelease
 Func _VLC_PlayerIsBusy($pPlayer)
 	Local $bBusy = False
 	For $i = $__g_aVLC_Busy[0][0] To 1 Step -1
-		Local $aWait = DllCall("kernel32.dll", "dword", "WaitForSingleObject", "handle", $__g_aVLC_Busy[$i][1], "dword", 0)
+		Local $aWait = DllCall($__g_hVLC_K32, "dword", "WaitForSingleObject", "handle", $__g_aVLC_Busy[$i][1], "dword", 0)
 		If Not @error And $aWait[0] = 0x102 Then ; still running
 			If $__g_aVLC_Busy[$i][0] = Ptr($pPlayer) Then $bBusy = True
 			ContinueLoop
@@ -1601,7 +1606,7 @@ Func __VLC_RunOnWorker($sFunc, $pArg, $iTimeout, $pArg2 = Default)
 	EndIf
 	Local $hTimer = TimerInit()
 	While 1
-		Local $aWait = DllCall("kernel32.dll", "dword", "WaitForSingleObject", "handle", $hThread, "dword", 0)
+		Local $aWait = DllCall($__g_hVLC_K32, "dword", "WaitForSingleObject", "handle", $hThread, "dword", 0)
 		If @error Or $aWait[0] <> 0x102 Then ExitLoop ; signalled (0) or failed
 		If $iTimeout >= 0 And TimerDiff($hTimer) > $iTimeout Then
 			__VLC_KeepAlive($tCtx) ; the thread may still read it
@@ -1625,7 +1630,7 @@ EndFunc   ;==>__VLC_RunOnWorker
 ; ===============================================================================================================================
 Func __VLC_WndProc($hWnd, $iMsg, $wParam, $lParam)
 	If $iMsg = $VLC_WM_EVENT Then Return __VLC_WM_EVENT($wParam, $lParam)
-	Local $aRet = DllCall("user32.dll", "lresult", "CallWindowProcW", "ptr", $__g_pVLC_OldWndProc, "hwnd", $hWnd, "uint", $iMsg, _
+	Local $aRet = DllCall($__g_hVLC_U32, "lresult", "CallWindowProcW", "ptr", $__g_pVLC_OldWndProc, "hwnd", $hWnd, "uint", $iMsg, _
 			"wparam", $wParam, "lparam", $lParam)
 	If @error Then Return 0
 	Return $aRet[0]

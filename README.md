@@ -2,7 +2,7 @@
 
 CCLibVLC embeds VLC video in AutoIt GUIs and gives full control of libVLC 3.0 from AutoIt – without ActiveX or Internet Explorer. It supports x86 and x64. It replaces the old `VLC.au3` v0.3 by seangriffin (whose function names it keeps) and `LibVLC.au3` by genius257.
 
-Version 1.0.1 · tested with VLC 3.0.24 and AutoIt 3.3.18.0 · licensed under GPL-3.0-or-later with an attribution term (see [License](#license))
+Version 1.0.2 · tested with VLC 3.0.24 and AutoIt 3.3.18.0 · licensed under GPL-3.0-or-later with an attribution term (see [License](#license))
 
 ## Contents
 

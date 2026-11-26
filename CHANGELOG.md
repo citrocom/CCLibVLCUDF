@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2 – 2026-11-26
+
+- Robustness: window procedures (event window, video host controls) and the worker wait loop now call Windows functions through DLL handles opened once. Before, every call loaded and freed the DLL by name, which takes the process-wide loader lock; while libVLC loads plugins, for example from a slow network share, this could stall the GUI thread.
+
 ## 1.0.1 – 2026-11-23
 
 - Fix: events could get lost or be delivered twice. The window procedure that receives events from the native thunk can interrupt running script code between two statements, also while the event pump was removing an event from the shared queue. Events now pass through a lock-free inbox (ring buffer with a single writer and a single reader) before they enter the queue, and script code that changes the queue keeps the Adlib pump out. Seen as a missing `MediaPlayerPlaying` event with RTSP streams.
